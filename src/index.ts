@@ -3,95 +3,80 @@ import { Request, Response } from "express-serve-static-core";
 import puppeteer from "puppeteer";
 import cors from "cors";
 import bodyParser from "body-parser";
-
+import dotenv from "dotenv";
+// Load environment variables from .env file
+dotenv.config();
+const PORT = process.env.PORT || 8000;
+const HOST_DOMAIN = process.env.HOST_DOMAIN;
 const app = express();
 app.use(bodyParser.json());
 app.use(express.json());
 // Use CORS middleware
-app.use(
-  cors({
-    origin: "http://localhost:5173", // Allow only this origin
-    allowedHeaders: ["Content-Type"],
-  })
-);
-
+app.use(cors());
+const browserPromise = puppeteer.launch({
+  headless: true,
+  args: ["--no-sandbox", "--disable-setuid-sandbox"],
+});
 // @ts-ignore
 app.post("/generate-pdf", async (req: Request, res: Response) => {
-  const { iframePath, iframeData } = req.body;
-  if (!iframePath || !iframeData) {
+  const { path, data } = req.body;
+  if (!path || !data) {
     return res.status(400).json({
       error: "Missing 'iframePath' or 'iframeData' in the request body.",
     });
   }
 
   try {
-    const browser = await puppeteer.launch({
-      headless: false,
-      devtools: true, // Open DevTools automatically
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      browser: "chrome",
-    });
+    const browser = await browserPromise;
     const page = await browser.newPage();
-
-    await page.goto(iframePath, { waitUntil: "load" });
-
-    // Create the HTML template
-    const htmlTemplate = `
-       <!DOCTYPE html>
-       <html lang="en">
-       <head>
-         <meta charset="UTF-8">
-         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-         <title>PDF Export</title>
-       </head>
-       <body>
-         <iframe
-           src="${iframePath}"
-           style="width:100%; height:100vh; border:none;"
-           onload="(() => {
-             const dataEl = document.createElement('script');
-             dataEl.id = 'data';
-             dataEl.type = 'application/json';
-             dataEl.textContent = ${JSON.stringify(iframeData)});
-             document.body.appendChild(dataEl);
-           })()"
-         ></iframe>
-       </body>
-       </html>
-     `;
-
-    // Load the template into Puppeteer
-    await page.setContent(htmlTemplate, { waitUntil: "networkidle0" });
-
-    await page.evaluate((iframeData) => {
-      const script = document.createElement("script");
-      script.type = "application/json";
-      script.id = "data";
-      script.textContent = JSON.stringify(iframeData);
-      document.body.appendChild(script); // Append the script to the body
-      debugger;
-    }, iframeData);
-
-    // Load the modified HTML into Puppeteer
-    // Generate the PDF
-    const pdfBuffer = await page.pdf({
-      format: "A4",
-      printBackground: true,
+    const fullPath = HOST_DOMAIN + "/" + path;
+    await page.goto(fullPath, {
+      waitUntil: "domcontentloaded",
     });
 
-    await browser.close();
+    const pageHtmlDoc = await page.$("html");
 
-    // Send the PDF as a response
+    if (!pageHtmlDoc) {
+      throw new Error("Failed to find the <html> element");
+    }
+
+    await page.screenshot({ path: "unEvaluated_page.png" });
+
+    // Evaluate and capture the modified HTML content
+    await page.evaluate((data) => {
+      const addedToWindow: { notify?: () => void; isPdfReady?: boolean } =
+        window as {};
+      return new Promise<void>((onPdfReady) => {
+        Object.assign(window, { data, onPdfReady });
+        addedToWindow["notify"]?.();
+      });
+    }, data);
+
+    console.log("PDF will generate now");
+    page.emulateMediaType("screen");
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", "attachment; filename=generated.pdf");
-    res.send(pdfBuffer);
+    return page
+      .pdf({
+        format: "A4",
+        printBackground: true,
+        margin: {
+          bottom: "0",
+          left: "0",
+          right: "0",
+          top: "0",
+        },
+      })
+      .then((pdfBuffer) => res.send(Buffer.from(pdfBuffer)))
+      .then(() => page.close());
+
+    // Send the PDF as a response
   } catch (error) {
     console.error("Error generating PDF:", error);
     res.status(500).json({ error: "Failed to generate PDF." });
   }
 });
 
-const PORT = 8000;
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Pdf Server is running on port ${PORT}`);
 });
