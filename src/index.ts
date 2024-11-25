@@ -19,7 +19,7 @@ const browserPromise = puppeteer.launch({
 });
 // @ts-ignore
 app.post("/generate-pdf", async (req: Request, res: Response) => {
-  const { path, data } = req.body;
+  const { path, data } = req.body as { path: string; data: unknown };
   if (!path || !data) {
     return res.status(400).json({
       error: "Missing 'iframePath' or 'iframeData' in the request body.",
@@ -33,15 +33,6 @@ app.post("/generate-pdf", async (req: Request, res: Response) => {
     await page.goto(fullPath, {
       waitUntil: "domcontentloaded",
     });
-
-    const pageHtmlDoc = await page.$("html");
-
-    if (!pageHtmlDoc) {
-      throw new Error("Failed to find the <html> element");
-    }
-
-    await page.screenshot({ path: "unEvaluated_page.png" });
-
     // Evaluate and capture the modified HTML content
     await page.evaluate((data) => {
       const addedToWindow: { notify?: () => void; isPdfReady?: boolean } =
@@ -51,8 +42,6 @@ app.post("/generate-pdf", async (req: Request, res: Response) => {
         addedToWindow["notify"]?.();
       });
     }, data);
-
-    console.log("PDF will generate now");
     page.emulateMediaType("screen");
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", "attachment; filename=generated.pdf");
@@ -69,7 +58,6 @@ app.post("/generate-pdf", async (req: Request, res: Response) => {
       })
       .then((pdfBuffer) => res.send(Buffer.from(pdfBuffer)))
       .then(() => page.close());
-
     // Send the PDF as a response
   } catch (error) {
     console.error("Error generating PDF:", error);

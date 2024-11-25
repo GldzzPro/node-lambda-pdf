@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "npx ts-node src/index.ts"
+    "pdf": "npx ts-node src/index.ts"
   },
   "keywords": [],
   "author": "",
